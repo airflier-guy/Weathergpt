@@ -3,7 +3,7 @@ import express from 'express';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { reply, MODE } from './brain.js';
-import { startTelegram, botUsername } from './telegram.js';
+import { startTelegram, telegramRoutes, botUsername } from './telegram.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT = process.env.PORT || 3000;
@@ -36,7 +36,18 @@ app.post('/api/chat', async (req, res) => {
   }
 });
 
-app.listen(PORT, () => {
+telegramRoutes(app);
+
+const server = app.listen(PORT, () => {
   console.log(`WeatherGPT running at http://localhost:${PORT}  (mode: ${MODE})`);
   startTelegram().catch(e => console.error('Telegram start failed:', e.message));
+});
+server.on('error', e => {
+  if (e.code === 'EADDRINUSE') {
+    console.error(`\nSTOP: port ${PORT} is already in use.\n` +
+      `An OLD copy of WeatherGPT is probably still running in another black window.\n` +
+      `Close every black window (or restart the computer), then double-click start again.\n` +
+      `The web page you see at localhost:${PORT} may be the OLD copy, which is why your changes do not show.\n`);
+  } else console.error('Server error:', e.message);
+  process.exit(1);
 });

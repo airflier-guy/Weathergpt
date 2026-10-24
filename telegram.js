@@ -2,11 +2,19 @@
 // It uses "long polling" (the bot asks Telegram for new messages), so it needs no public URL.
 // It works while this app is running (e.g. on your computer during a demo).
 
+import crypto from 'node:crypto';
 import { reply } from './brain.js';
 
 const TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 export let botUsername = null;
 const API = `https://api.telegram.org/bot${TOKEN}`;
+
+// Webhook mode: used automatically on a public host (Render sets RENDER_EXTERNAL_URL; you can also set PUBLIC_URL).
+// Telegram then sends each message to /telegram/webhook, which wakes a sleeping free server.
+// Polling mode: used on your own computer (no public address).
+const PUBLIC_URL = (process.env.PUBLIC_URL || process.env.RENDER_EXTERNAL_URL || '').replace(/\/$/, '');
+const WEBHOOK_MODE = Boolean(TOKEN && PUBLIC_URL && process.env.TELEGRAM_MODE !== 'polling');
+const SECRET = TOKEN ? crypto.createHash('sha256').update('wg:' + TOKEN).digest('hex').slice(0, 40) : '';
 
 const chats = new Map(); // chatId -> { lang, history }
 const WELCOME = {
@@ -46,13 +54,31 @@ async function handle(msg) {
   }
 }
 
+// Call once before the server starts listening.
+export function telegramRoutes(app) {
+  if (!WEBHOOK_MODE) return;
+  app.post('/telegram/webhook', (req, res) => {
+    if (req.get('x-telegram-bot-api-secret-token') !== SECRET) return res.sendStatus(403);
+    res.sendStatus(200); // answer Telegram at once; the reply is sent afterwards
+    const msg = req.body?.message;
+    if (msg) handle(msg).catch(e => console.error('telegram webhook error:', e.message));
+  });
+}
+
 export async function startTelegram() {
   if (!TOKEN) { console.log('Telegram bot: not started (no TELEGRAM_BOT_TOKEN found).'); return; }
   const me = await tg('getMe', {}).catch(() => null);
   if (!me?.ok) { console.error('Telegram: token looks wrong (getMe failed). Bot not started.'); return; }
-  await tg('deleteWebhook', {}).catch(() => {});
   botUsername = me.result.username;
-  console.log(`Telegram bot running: https://t.me/${me.result.username}`);
+  if (WEBHOOK_MODE) {
+    const r = await tg('setWebhook', { url: `${PUBLIC_URL}/telegram/webhook`, secret_token: SECRET, allowed_updates: ['message'], drop_pending_updates: false });
+    if (!r?.ok) { console.error('Telegram: could not set the webhook:', r?.description); return; }
+    console.log(`Telegram bot running (webhook mode): https://t.me/${botUsername}`);
+    return;
+  }
+  await tg('deleteWebhook', {}).catch(() => {});
+  console.log(`Telegram bot running (on this computer): https://t.me/${botUsername}`);
+  console.log('  Note: while this runs, an online copy using the same token will stop receiving messages.');
 
   let offset = 0;
   (async function loop() {

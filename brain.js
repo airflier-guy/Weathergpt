@@ -9,7 +9,9 @@ import { TOOLS, runTool } from './tools.js';
 import { answerBasic } from './fallback.js';
 
 const GEMINI_KEY = process.env.GEMINI_API_KEY;
-const GEMINI_MODEL = process.env.GEMINI_MODEL || 'gemini-2.5-flash';
+// Google renames models often. We try your GEMINI_MODEL first (if set), then these, moving on if a model is gone (404).
+const GEMINI_MODELS = [process.env.GEMINI_MODEL, 'gemini-3.8-flash', 'gemini-flash-latest'].filter(Boolean);
+const GEMINI_MODEL = GEMINI_MODELS[0];
 const CLAUDE_MODEL = process.env.CLAUDE_MODEL || 'claude-sonnet-5-5';
 const claude = process.env.ANTHROPIC_API_KEY ? new Anthropic() : null;
 
@@ -30,7 +32,16 @@ Rules:
 
 /* ---------------- Gemini (REST, no extra package) ---------------- */
 async function viaGemini(convo, lang) {
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent`;
+  let lastErr;
+  for (const model of GEMINI_MODELS) {
+    try { return await viaGeminiModel(convo, lang, model); }
+    catch (e) { lastErr = e; if (!/^Gemini (404|400)/.test(e.message)) throw e; console.error(`Gemini model "${model}" not usable (${e.message.slice(0, 60).replace(/\s+/g, ' ')}...). Trying the next one.`); }
+  }
+  throw lastErr;
+}
+
+async function viaGeminiModel(convo, lang, model) {
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`;
   const contents = convo.map(m => ({ role: m.role === 'assistant' ? 'model' : 'user', parts: [{ text: m.content }] }));
   const tools = [{ functionDeclarations: TOOLS.map(t => ({ name: t.name, description: t.description, parameters: t.input_schema })) }];
   const toolsUsed = [];

@@ -4,6 +4,14 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>WeatherGPT</title>
+<link rel="manifest" href="/manifest.json">
+<meta name="theme-color" content="#0f172a">
+<link rel="icon" href="/icons/icon-192.png">
+<link rel="apple-touch-icon" href="/icons/apple-touch-icon.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="WeatherGPT">
 <style>
   :root { --bg:#0f172a; --card:#1e293b; --me:#2563eb; --text:#e2e8f0; --muted:#94a3b8; --accent:#38bdf8; }
   * { box-sizing:border-box; }
@@ -35,6 +43,7 @@
   <h1>🌦️ WeatherGPT</h1>
   <span id="tag"></span>
   <a id="tglink" href="#" target="_blank" rel="noopener" style="display:none;color:var(--accent);font-size:13px;text-decoration:none;white-space:nowrap">✈️ Telegram</a>
+  <button id="install" type="button" hidden style="background:var(--accent);color:#04202e;border:0;border-radius:8px;padding:6px 10px;font-weight:600;cursor:pointer;font-size:13px">⬇ Install app</button>
   <button id="speak" class="off" type="button" style="background:var(--card);border:1px solid #334155;border-radius:8px;padding:6px 8px;cursor:pointer;color:var(--text)" title="Read replies aloud">🔊</button>
   <select id="lang" title="Language">
     <option value="en">English</option>
@@ -125,6 +134,24 @@ $('mic').addEventListener('click', () => {
 });
 renderStatic(true);
 fetch('/api/health').then(r => r.json()).then(d => { if (d.telegram_url) { const a = $('tglink'); a.href = d.telegram_url; a.style.display = 'inline'; } }).catch(() => {});
+
+/* ---------- PWA: install button + service worker + iPhone hint ---------- */
+let deferredInstall = null;
+window.addEventListener('beforeinstallprompt', e => { e.preventDefault(); deferredInstall = e; $('install').hidden = false; });
+$('install').addEventListener('click', async () => {
+  if (!deferredInstall) return;
+  deferredInstall.prompt();
+  await deferredInstall.userChoice.catch(() => {});
+  deferredInstall = null; $('install').hidden = true;
+});
+window.addEventListener('appinstalled', () => { $('install').hidden = true; });
+const isIOS = /iphone|ipad|ipod/i.test(navigator.userAgent) && !window.navigator.standalone;
+if (isIOS && !localStorage.getItem('wg_ios_hint')) {
+  add('📱 To install on iPhone: tap the Share button, then “Add to Home Screen”.');
+  try { localStorage.setItem('wg_ios_hint', '1'); } catch (e) {}
+}
+if ('serviceWorker' in navigator) window.addEventListener('load', () => navigator.serviceWorker.register('/sw.js').catch(() => {}));
+window.addEventListener('offline', () => add('You are offline. Weather needs internet, so I will answer again when you are back online.'));
 </script>
 </body>
 </html>
