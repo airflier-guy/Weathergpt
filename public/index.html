@@ -1,0 +1,130 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>WeatherGPT</title>
+<style>
+  :root { --bg:#0f172a; --card:#1e293b; --me:#2563eb; --text:#e2e8f0; --muted:#94a3b8; --accent:#38bdf8; }
+  * { box-sizing:border-box; }
+  body { margin:0; font-family:system-ui,"Noto Sans Devanagari","Noto Sans Bengali",Segoe UI,Roboto,sans-serif; background:var(--bg); color:var(--text); height:100dvh; display:flex; flex-direction:column; }
+  header { padding:12px 16px; border-bottom:1px solid #334155; display:flex; align-items:center; gap:10px; }
+  header h1 { font-size:18px; margin:0; }
+  header span { color:var(--muted); font-size:12px; flex:1; }
+  select, #clear { background:var(--card); color:var(--text); border:1px solid #334155; border-radius:8px; padding:6px 8px; cursor:pointer; }
+  #chat { flex:1; overflow-y:auto; padding:16px; display:flex; flex-direction:column; gap:12px; max-width:800px; width:100%; margin:0 auto; }
+  .msg { max-width:92%; padding:10px 14px; border-radius:14px; line-height:1.5; word-wrap:break-word; }
+  .bot { background:var(--card); align-self:flex-start; }
+  .me { background:var(--me); align-self:flex-end; white-space:pre-wrap; }
+  .bot p { margin:0 0 8px; } .bot p:last-child { margin:0; }
+  .bot ul { margin:4px 0 8px; padding-left:20px; }
+  .tools { margin-top:8px; font-size:11px; color:var(--muted); }
+  .dots span { animation:b 1.2s infinite; display:inline-block; } .dots span:nth-child(2){animation-delay:.2s} .dots span:nth-child(3){animation-delay:.4s}
+  @keyframes b { 0%,60%,100%{opacity:.2} 30%{opacity:1} }
+  .chips { display:flex; flex-wrap:wrap; gap:8px; max-width:800px; width:100%; margin:0 auto; padding:0 16px 8px; }
+  .chips button { background:transparent; border:1px solid #334155; color:var(--muted); border-radius:999px; padding:6px 12px; cursor:pointer; font-size:13px; }
+  form { display:flex; gap:8px; padding:12px 16px; max-width:800px; width:100%; margin:0 auto; }
+  input { flex:1; padding:12px 14px; border-radius:10px; border:1px solid #334155; background:var(--card); color:var(--text); font-size:15px; min-width:0; }
+  form button { background:var(--accent); border:0; border-radius:10px; padding:0 16px; font-weight:600; cursor:pointer; }
+  #mic { background:var(--card); color:var(--text); border:1px solid #334155; }
+  #speak.off { opacity:.4; }
+</style>
+</head>
+<body>
+<header>
+  <h1>🌦️ WeatherGPT</h1>
+  <span id="tag"></span>
+  <a id="tglink" href="#" target="_blank" rel="noopener" style="display:none;color:var(--accent);font-size:13px;text-decoration:none;white-space:nowrap">✈️ Telegram</a>
+  <button id="speak" class="off" type="button" style="background:var(--card);border:1px solid #334155;border-radius:8px;padding:6px 8px;cursor:pointer;color:var(--text)" title="Read replies aloud">🔊</button>
+  <select id="lang" title="Language">
+    <option value="en">English</option>
+    <option value="hi">हिन्दी</option>
+    <option value="bn">বাংলা</option>
+  </select>
+  <button id="clear" type="button" title="New chat">↺</button>
+</header>
+<div id="chat"></div>
+<div class="chips" id="chips"></div>
+<form id="form">
+  <input id="q" autocomplete="off">
+  <button type="button" id="mic" title="Speak">🎤</button>
+  <button id="send">➤</button>
+</form>
+
+<script>
+const UI = {
+  en: { tag:'Forecasts · Alerts · Climate', ph:'Ask about weather, alerts or climate…', hi:"Hi! I'm WeatherGPT 👋 Ask me for a forecast, weather alerts or climate information for any place. I can also give travel, health and farming advice.", err:'Something went wrong. Please try again.',
+        chips:['Weather in Kolkata this week','Will it rain tomorrow in Mumbai? Do I need an umbrella?','Any weather alerts for Puri?','What is the climate of Shimla like?','I am a farmer near Ludhiana. When should I irrigate?'] },
+  hi: { tag:'पूर्वानुमान · चेतावनी · जलवायु', ph:'मौसम, चेतावनी या जलवायु के बारे में पूछें…', hi:'नमस्ते! मैं WeatherGPT हूँ 👋 किसी भी स्थान का पूर्वानुमान, मौसम चेतावनी या जलवायु जानकारी पूछें। यात्रा, स्वास्थ्य और खेती की सलाह भी मिलेगी।', err:'कुछ गड़बड़ हुई। फिर कोशिश करें।',
+        chips:['कोलकाता का इस हफ़्ते का मौसम','कल मुंबई में बारिश होगी? छाता चाहिए?','पुरी के लिए कोई चेतावनी?','शिमला की जलवायु कैसी है?','मैं लुधियाना के पास किसान हूँ। सिंचाई कब करूँ?'] },
+  bn: { tag:'পূর্বাভাস · সতর্কতা · জলবায়ু', ph:'আবহাওয়া, সতর্কতা বা জলবায়ু সম্পর্কে জিজ্ঞাসা করুন…', hi:'নমস্কার! আমি WeatherGPT 👋 যেকোনো জায়গার পূর্বাভাস, আবহাওয়া সতর্কতা বা জলবায়ু তথ্য জিজ্ঞাসা করুন। ভ্রমণ, স্বাস্থ্য ও চাষের পরামর্শও পাবেন।', err:'কিছু ভুল হয়েছে। আবার চেষ্টা করুন।',
+        chips:['এই সপ্তাহে কলকাতার আবহাওয়া','কাল মুম্বাইয়ে বৃষ্টি হবে? ছাতা লাগবে?','পুরীর জন্য কোনো সতর্কতা আছে?','শিমলার জলবায়ু কেমন?','আমি লুধিয়ানার কাছে চাষি। কখন সেচ দেব?'] }
+};
+const LANG_CODE = { en:'en-IN', hi:'hi-IN', bn:'bn-IN' };
+let lang = localStorage.getItem('wg_lang') || 'en';
+let history = [];
+let speakOn = false;
+const chat = document.getElementById('chat');
+const $ = id => document.getElementById(id);
+
+const esc = s => s.replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+function md(text) {                       // tiny, safe markdown: **bold**, lists, paragraphs
+  const lines = esc(text).split('\n'); let out = '', inList = false;
+  for (const raw of lines) {
+    const line = raw.replace(/\*\*(.+?)\*\*/g, '<b>$1</b>');
+    const li = line.match(/^\s*[-*•]\s+(.*)/);
+    if (li) { if (!inList) { out += '<ul>'; inList = true; } out += `<li>${li[1]}</li>`; }
+    else { if (inList) { out += '</ul>'; inList = false; } if (line.trim()) out += `<p>${line}</p>`; }
+  }
+  return out + (inList ? '</ul>' : '');
+}
+function add(html, who = 'bot') {
+  const d = document.createElement('div'); d.className = 'msg ' + who; d.innerHTML = html;
+  chat.appendChild(d); chat.scrollTop = chat.scrollHeight; return d;
+}
+function speak(text) {
+  if (!speakOn || !('speechSynthesis' in window)) return;
+  const u = new SpeechSynthesisUtterance(text.replace(/[*_#]/g, ''));
+  u.lang = LANG_CODE[lang]; speechSynthesis.cancel(); speechSynthesis.speak(u);
+}
+
+async function send(text) {
+  add(esc(text), 'me');
+  history.push({ role: 'user', content: text });
+  const bubble = add('<span class="dots"><span>●</span><span>●</span><span>●</span></span>');
+  $('send').disabled = true;
+  try {
+    const r = await fetch('/api/chat', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ messages: history, lang }) });
+    const data = await r.json();
+    if (!r.ok) throw new Error(data.error || UI[lang].err);
+    history.push({ role: 'assistant', content: data.reply });
+    const used = [...new Set((data.tools_used || []).map(t => `${t.name}(${t.input.place || ''})`))];
+    bubble.innerHTML = md(data.reply) + (used.length ? `<div class="tools">🔧 ${esc(used.join(' · '))}</div>` : '');
+    speak(data.reply);
+  } catch (e) {
+    history.pop();
+    bubble.textContent = e.message || UI[lang].err;
+  } finally { $('send').disabled = false; chat.scrollTop = chat.scrollHeight; }
+}
+
+function renderStatic(greet) {
+  document.documentElement.lang = lang;
+  $('lang').value = lang; $('tag').textContent = UI[lang].tag; $('q').placeholder = UI[lang].ph;
+  $('chips').innerHTML = '';
+  UI[lang].chips.forEach(s => { const b = document.createElement('button'); b.textContent = s; b.onclick = () => send(s); $('chips').appendChild(b); });
+  if (greet) { chat.innerHTML = ''; add(UI[lang].hi); }
+}
+$('form').addEventListener('submit', e => { e.preventDefault(); const v = $('q').value.trim(); if (v) { $('q').value = ''; send(v); } });
+$('lang').addEventListener('change', e => { lang = e.target.value; localStorage.setItem('wg_lang', lang); history = []; renderStatic(true); });
+$('clear').addEventListener('click', () => { history = []; renderStatic(true); });
+$('speak').addEventListener('click', () => { speakOn = !speakOn; $('speak').classList.toggle('off', !speakOn); if (!speakOn) speechSynthesis.cancel(); });
+$('mic').addEventListener('click', () => {
+  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if (!SR) return alert('Voice input is not supported in this browser (try Chrome).');
+  const r = new SR(); r.lang = LANG_CODE[lang]; r.onresult = ev => send(ev.results[0][0].transcript); r.start();
+});
+renderStatic(true);
+fetch('/api/health').then(r => r.json()).then(d => { if (d.telegram_url) { const a = $('tglink'); a.href = d.telegram_url; a.style.display = 'inline'; } }).catch(() => {});
+</script>
+</body>
+</html>
