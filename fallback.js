@@ -53,6 +53,7 @@ const S = {
     ask: 'Which place do you mean? For example: "weather in Kolkata", "alerts for Puri" or "climate of Shimla".',
     notFound: p => `I couldn't find a place called "${p}". Please try a nearby city or check the spelling.`,
     err: 'I could not fetch weather data right now. Please try again in a minute.',
+    backup: 'ℹ️ Backup weather source used; rain chance is estimated.',
     now: 'now', tomorrow: 'tomorrow', today: 'Today', feels: 'feels like', hum: 'humidity', wind: 'wind', rain: 'rain',
     week: 'Next 7 days', alertsTitle: 'Weather alerts (next 7 days)', none: 'No significant weather hazards in the next 7 days.',
     disc: 'These alerts are calculated from forecast values, not official warnings. Follow IMD (mausam.imd.gov.in) and local authorities. In an emergency call 112.',
@@ -68,6 +69,7 @@ const S = {
     ask: 'आप किस स्थान की बात कर रहे हैं? जैसे: "कोलकाता का मौसम", "पुरी के लिए चेतावनी" या "शिमला की जलवायु"।',
     notFound: p => `"${p}" नाम का स्थान नहीं मिला। पास का कोई शहर आज़माएँ या वर्तनी जाँचें।`,
     err: 'अभी मौसम का डेटा नहीं मिल पाया। इंटरनेट जाँचकर फिर कोशिश करें।',
+    backup: 'ℹ️ बैकअप स्रोत का उपयोग हुआ; बारिश की संभावना अनुमानित है।',
     now: 'अभी', tomorrow: 'कल', today: 'आज', feels: 'महसूस', hum: 'नमी', wind: 'हवा', rain: 'बारिश',
     week: 'अगले 7 दिन', alertsTitle: 'मौसम चेतावनी (अगले 7 दिन)', none: 'अगले 7 दिनों में कोई बड़ा मौसमी खतरा नहीं दिख रहा।',
     disc: 'ये चेतावनियाँ पूर्वानुमान के आँकड़ों से बनी हैं, आधिकारिक चेतावनी नहीं। IMD (mausam.imd.gov.in) और स्थानीय प्रशासन की सूचना मानें। आपात स्थिति में 112 पर कॉल करें।',
@@ -84,6 +86,7 @@ const S = {
     ask: 'কোন জায়গার কথা বলছেন? যেমন: "কলকাতার আবহাওয়া", "পুরীর সতর্কতা" বা "শিমলার জলবায়ু"।',
     notFound: p => `"${p}" নামের জায়গা খুঁজে পাইনি। কাছের কোনো শহর চেষ্টা করুন বা বানান দেখুন।`,
     err: 'এখন আবহাওয়ার তথ্য আনা যাচ্ছে না। ইন্টারনেট দেখে আবার চেষ্টা করুন।',
+    backup: 'ℹ️ বিকল্প সূত্র ব্যবহার হয়েছে; বৃষ্টির সম্ভাবনা আনুমানিক।',
     now: 'এখন', tomorrow: 'আগামীকাল', today: 'আজ', feels: 'অনুভূত', hum: 'আর্দ্রতা', wind: 'বাতাস', rain: 'বৃষ্টি',
     week: 'আগামী ৭ দিন', alertsTitle: 'আবহাওয়া সতর্কতা (আগামী ৭ দিন)', none: 'আগামী ৭ দিনে বড় কোনো আবহাওয়া ঝুঁকি দেখা যাচ্ছে না।',
     disc: 'এই সতর্কতা পূর্বাভাসের সংখ্যা থেকে তৈরি, সরকারি সতর্কতা নয়। IMD (mausam.imd.gov.in) ও স্থানীয় প্রশাসনের নির্দেশ মানুন। জরুরি অবস্থায় ১১২ নম্বরে ফোন করুন।',
@@ -129,6 +132,7 @@ function formatForecast(f, q, s) {
   lines.push('');
   lines.push(`**${s.week}**`);
   f.daily.forEach((d, i) => lines.push(`- **${i === 0 ? s.today : dayName(d.date, s)}**: ${icon(d.condition)} ${Math.round(d.max)}° / ${Math.round(d.min)}° · ${s.rain} ${d.rain_probability_pct}%`));
+  if (/backup/i.test(f.source || '')) lines.push('', s.backup);
   return lines.join('\n');
 }
 

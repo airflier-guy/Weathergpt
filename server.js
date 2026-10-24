@@ -3,6 +3,7 @@ import express from 'express';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { reply, MODE } from './brain.js';
+import { diagnose, VERSION } from './tools.js';
 import { startTelegram, telegramRoutes, botUsername } from './telegram.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -15,14 +16,16 @@ app.use(express.static(path.join(__dirname, 'public')));
 
 // very small in-memory rate limiter: 30 requests / minute / IP
 const hits = new Map();
-app.use('/api/chat', (req, res, next) => {
+app.use(['/api/chat', '/api/diag'], (req, res, next) => {
   const now = Date.now(), ip = req.ip;
   const list = (hits.get(ip) || []).filter(t => now - t < 60000);
   if (list.length >= 30) return res.status(429).json({ error: 'Too many requests. Please wait a minute.' });
   list.push(now); hits.set(ip, list); next();
 });
 
-app.get('/api/health', (_req, res) => res.json({ ok: true, mode: MODE, telegram: Boolean(process.env.TELEGRAM_BOT_TOKEN), telegram_url: botUsername ? `https://t.me/${botUsername}` : null }));
+app.get('/api/diag', async (_req, res) => res.json({ ...(await diagnose()), mode: MODE }));
+
+app.get('/api/health', (_req, res) => res.json({ ok: true, version: VERSION, mode: MODE, telegram: Boolean(process.env.TELEGRAM_BOT_TOKEN), telegram_url: botUsername ? `https://t.me/${botUsername}` : null }));
 
 app.post('/api/chat', async (req, res) => {
   const { messages, lang = 'en' } = req.body || {};

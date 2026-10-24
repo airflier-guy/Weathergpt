@@ -10,7 +10,7 @@ import { answerBasic } from './fallback.js';
 
 const GEMINI_KEY = process.env.GEMINI_API_KEY;
 // Google renames models often. We try your GEMINI_MODEL first (if set), then these, moving on if a model is gone (404).
-const GEMINI_MODELS = [process.env.GEMINI_MODEL, 'gemini-3.8-flash', 'gemini-flash-latest'].filter(Boolean);
+const GEMINI_MODELS = [...new Set([process.env.GEMINI_MODEL, 'gemini-3.8-flash', 'gemini-flash-latest', 'gemini-flash-lite-latest'].filter(Boolean))];
 const GEMINI_MODEL = GEMINI_MODELS[0];
 const CLAUDE_MODEL = process.env.CLAUDE_MODEL || 'claude-sonnet-5-5';
 const claude = process.env.ANTHROPIC_API_KEY ? new Anthropic() : null;
@@ -35,7 +35,7 @@ async function viaGemini(convo, lang) {
   let lastErr;
   for (const model of GEMINI_MODELS) {
     try { return await viaGeminiModel(convo, lang, model); }
-    catch (e) { lastErr = e; if (!/^Gemini (404|400)/.test(e.message)) throw e; console.error(`Gemini model "${model}" not usable (${e.message.slice(0, 60).replace(/\s+/g, ' ')}...). Trying the next one.`); }
+    catch (e) { lastErr = e; if (!/^Gemini (404|400|429|500|503)/.test(e.message)) throw e; console.error(`Gemini model "${model}" not usable (${e.message.slice(0, 60).replace(/\s+/g, ' ')}...). Trying the next one.`); }
   }
   throw lastErr;
 }
