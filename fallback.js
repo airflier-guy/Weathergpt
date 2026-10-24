@@ -6,7 +6,7 @@ import { getForecast, getAlerts, getClimate } from './tools.js';
 
 const STOP = new Set((
   // English
-  "what whats what's is the weather forecast temperature today tomorrow tonight now will it rain raining in at of for how about me tell show please umbrella need do i crop crops farming farm farmer advice alert alerts warning warnings climate average normal history historical monthly are there any this week next days day be a an and when should near my am irrigate irrigation harvest much like does have get current currently check hot cold wet dry going to on rainfall humid hi hello kal mausam ka ki " +
+  "what whats what's is the weather forecast temperature today tomorrow tonight now will it rain raining in at of for how about me tell show please umbrella need do i crop crops farming farm farmer advice alert alerts warning warnings climate average normal history historical monthly are there any this week next days day be a an and when should near my am irrigate irrigation harvest much like does have get current currently check hot cold wet dry going to on rainfall humid hi hello kal mausam ka ki update updates report reports status news give kindly pls plz temp humidity outlook info information details conditions condition weekend week city town village district " +
   // Hindi
   "मौसम का की के में कल आज लिए चेतावनी जलवायु खेती सलाह बारिश होगी होगा क्या कैसा कैसी है हैं मैं किसान पास कब करूँ सिंचाई इस हफ़्ते हफ्ते छाता चाहिए कोई पूर्वानुमान तापमान और से पर को " +
   // Bengali
@@ -16,10 +16,20 @@ const STOP = new Set((
 const stripBn = w => /[ঀ-৿]/.test(w) ? w.replace(/(য়ে|এর|র|ে)$/u, '') : w;
 
 export function extractPlace(text) {
-  const tokens = text.replace(/[?!.,।;:()"“”]/g, ' ').split(/\s+/).filter(Boolean);
-  const keep = tokens.filter(w => !STOP.has(w.toLowerCase()) && !STOP.has(stripBn(w)));
-  const place = keep.map(stripBn).join(' ').trim();
-  return place || null;
+  const clean = text.replace(/[?!.,।;:()"“”]/g, ' ').replace(/\s+/g, ' ').trim();
+  const filter = str => str.split(' ').filter(w => w && !STOP.has(w.toLowerCase()) && !STOP.has(stripBn(w))).map(stripBn).join(' ').trim();
+  // "weather in Pune today" -> words after the LAST in/at/of/for/near/around
+  const m = [...clean.matchAll(/\b(?:in|at|of|for|near|around)\s+(.+)$/gi)].pop();
+  if (m) { const p = filter(m[1]); if (p) return p; }
+  return filter(clean) || null;
+}
+
+// If "city darjeeling" is not found, also try "darjeeling" (single words from the end, then the full phrase).
+export function placeCandidates(place) {
+  const words = place.split(' ').filter(Boolean);
+  const out = [place];
+  for (let i = words.length - 1; i >= 0; i--) if (!out.includes(words[i])) out.push(words[i]);
+  return out;
 }
 
 export function parseIntent(text) {
@@ -42,7 +52,7 @@ const S = {
   en: {
     ask: 'Which place do you mean? For example: "weather in Kolkata", "alerts for Puri" or "climate of Shimla".',
     notFound: p => `I couldn't find a place called "${p}". Please try a nearby city or check the spelling.`,
-    err: 'I could not fetch weather data right now. Please check your connection and try again.',
+    err: 'I could not fetch weather data right now. Please try again in a minute.',
     now: 'now', tomorrow: 'tomorrow', today: 'Today', feels: 'feels like', hum: 'humidity', wind: 'wind', rain: 'rain',
     week: 'Next 7 days', alertsTitle: 'Weather alerts (next 7 days)', none: 'No significant weather hazards in the next 7 days.',
     disc: 'These alerts are calculated from forecast values, not official warnings. Follow IMD (mausam.imd.gov.in) and local authorities. In an emergency call 112.',
@@ -145,6 +155,12 @@ function formatClimate(c, s) {
 }
 
 /* ---------------- entry point ---------------- */
+const reasonOf = e => {
+  const st = e.status || (/Upstream error (\d+)/.exec(e.message) || [])[1];
+  if (st) return `weather service error ${st}`;
+  return `could not reach the weather service${e.cause?.code ? ' (' + e.cause.code + ')' : ''}`;
+};
+
 export async function answerBasic(messages, lang = 'en') {
   const s = S[lang] || S.en;
   const users = messages.filter(m => m.role === 'user').map(m => m.content);
@@ -156,15 +172,19 @@ export async function answerBasic(messages, lang = 'en') {
   if (!place) return { reply: s.ask, tools_used: [] };
 
   const tools_used = [];
-  try {
-    let text;
-    if (q.intent === 'alerts') { tools_used.push({ name: 'get_alerts', input: { place } }); text = formatAlerts(await getAlerts({ place }), s); }
-    else if (q.intent === 'climate') { tools_used.push({ name: 'get_climate', input: { place } }); text = formatClimate(await getClimate({ place }), s); }
-    else { tools_used.push({ name: 'get_forecast', input: { place } }); text = formatForecast(await getForecast({ place }), q, s); }
-    return { reply: text, tools_used };
-  } catch (e) {
-    if (/Could not find a place/.test(e.message)) return { reply: s.notFound(place), tools_used };
-    console.error(e);
-    return { reply: s.err, tools_used };
+  const candidates = placeCandidates(place);
+  for (let i = 0; i < candidates.length; i++) {
+    const p = candidates[i];
+    try {
+      let text;
+      if (q.intent === 'alerts') { tools_used.push({ name: 'get_alerts', input: { place: p } }); text = formatAlerts(await getAlerts({ place: p }), s); }
+      else if (q.intent === 'climate') { tools_used.push({ name: 'get_climate', input: { place: p } }); text = formatClimate(await getClimate({ place: p }), s); }
+      else { tools_used.push({ name: 'get_forecast', input: { place: p } }); text = formatForecast(await getForecast({ place: p }), q, s); }
+      return { reply: text, tools_used };
+    } catch (e) {
+      if (/Could not find a place/.test(e.message)) { if (i < candidates.length - 1) continue; return { reply: s.notFound(place), tools_used }; }
+      console.error(`Weather lookup failed for "${p}": ${e.message}${e.cause ? ' | ' + (e.cause.code || e.cause.message) : ''}`);
+      return { reply: `${s.err}\n(${reasonOf(e)})`, tools_used };
+    }
   }
 }

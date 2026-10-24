@@ -12,9 +12,17 @@ const WMO = {
 };
 
 async function getJSON(url) {
-  const r = await fetch(url, { signal: AbortSignal.timeout(15000) });
-  if (!r.ok) throw new Error(`Upstream error ${r.status}`);
-  return r.json();
+  let lastErr;
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      const r = await fetch(url, { signal: AbortSignal.timeout(15000), headers: { 'User-Agent': 'WeatherGPT/1.0 (student project)' } });
+      if (r.ok) return r.json();
+      const err = new Error(`Upstream error ${r.status}`); err.status = r.status; lastErr = err;
+      if (r.status !== 429 && r.status < 500) throw err; // no point retrying a 4xx like 400/404
+    } catch (e) { lastErr = e; if (e.status && e.status !== 429 && e.status < 500) throw e; }
+    if (attempt === 0) await new Promise(res => setTimeout(res, 1200)); // wait a moment, then retry once
+  }
+  throw lastErr;
 }
 
 async function geocode(place) {
