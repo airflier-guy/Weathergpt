@@ -19,7 +19,7 @@ export const MODE = GEMINI_KEY ? `AI (Gemini ${GEMINI_MODEL})` : claude ? `AI (C
 
 const LANG_NAMES = { en: 'English', hi: 'Hindi', bn: 'Bengali' };
 
-const systemPrompt = lang => `You are WeatherGPT, a conversational assistant for weather forecasts, weather alerts and climate information, built mainly for users in India.
+const systemPrompt = (lang, role) => `You are WeatherGPT, a conversational assistant for weather forecasts, weather alerts and climate information, built mainly for users in India.
 
 Rules:
 - Always use the tools to get weather, alert or climate data. Never invent numbers. If a tool fails or a place isn't found, say so and ask for a clearer place name.
@@ -28,19 +28,22 @@ Rules:
 - For alerts: the alerts tool is derived from forecast thresholds, not official warnings. Always tell the user to follow IMD (mausam.imd.gov.in) or local authorities for official warnings, and in an emergency to call 112 (or local disaster helplines).
 - For climate questions, summarise the pattern (hottest/coldest/wettest months) rather than listing every number, unless asked.
 - If the user doesn't name a place and none was mentioned earlier, ask which place they mean.
+- Forecast days include a confidence level (High/Medium/Low) from comparing two independent weather sources. Mention it briefly, and when it is Low say the forecast is uncertain and to re-check later.
+- When the user describes their job or asks what to DO (spray, irrigate, harvest, travel, go fishing, work outside), call get_advice with role farmer, traveller, fisherman or worker and give those recommendations with the exact time windows from the tool.${role ? `\n- The user selected the role "${role}" in the app: for weather questions also call get_advice with that role and add its advice.` : ''}
+- Tell users they can get a daily brief and alerts on Telegram with /subscribe <place> <role>.
 - Stay on topic: weather, climate and weather-related advice. Politely decline unrelated requests.`;
 
 /* ---------------- Gemini (REST, no extra package) ---------------- */
-async function viaGemini(convo, lang) {
+async function viaGemini(convo, lang, role) {
   let lastErr;
   for (const model of GEMINI_MODELS) {
-    try { return await viaGeminiModel(convo, lang, model); }
+    try { return await viaGeminiModel(convo, lang, model, role); }
     catch (e) { lastErr = e; if (!/^Gemini (404|400|429|500|503)/.test(e.message)) throw e; console.error(`Gemini model "${model}" not usable (${e.message.slice(0, 60).replace(/\s+/g, ' ')}...). Trying the next one.`); }
   }
   throw lastErr;
 }
 
-async function viaGeminiModel(convo, lang, model) {
+async function viaGeminiModel(convo, lang, model, role) {
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`;
   const contents = convo.map(m => ({ role: m.role === 'assistant' ? 'model' : 'user', parts: [{ text: m.content }] }));
   const tools = [{ functionDeclarations: TOOLS.map(t => ({ name: t.name, description: t.description, parameters: t.input_schema })) }];
@@ -50,7 +53,7 @@ async function viaGeminiModel(convo, lang, model) {
     const r = await fetch(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'x-goog-api-key': GEMINI_KEY },
-      body: JSON.stringify({ systemInstruction: { parts: [{ text: systemPrompt(lang) }] }, contents, tools }),
+      body: JSON.stringify({ systemInstruction: { parts: [{ text: systemPrompt(lang, role) }] }, contents, tools }),
       signal: AbortSignal.timeout(30000)
     });
     if (!r.ok) throw new Error(`Gemini ${r.status}: ${(await r.text()).slice(0, 300)}`);
@@ -76,10 +79,10 @@ async function viaGeminiModel(convo, lang, model) {
 }
 
 /* ---------------- Claude ---------------- */
-async function viaClaude(convoIn, lang) {
+async function viaClaude(convoIn, lang, role) {
   const convo = [...convoIn], toolsUsed = [];
   for (let step = 0; step < 6; step++) {
-    const resp = await claude.messages.create({ model: CLAUDE_MODEL, max_tokens: 1200, system: systemPrompt(lang), tools: TOOLS, messages: convo });
+    const resp = await claude.messages.create({ model: CLAUDE_MODEL, max_tokens: 1200, system: systemPrompt(lang, role), tools: TOOLS, messages: convo });
     if (resp.stop_reason !== 'tool_use') {
       return { reply: resp.content.filter(b => b.type === 'text').map(b => b.text).join('\n').trim(), tools_used: toolsUsed };
     }
@@ -97,17 +100,18 @@ async function viaClaude(convoIn, lang) {
 
 /* ---------------- public entry point ---------------- */
 // messages: [{role:'user'|'assistant', content:'text'}], last one must be from the user
-export async function reply(messages, lang = 'en') {
+export async function reply(messages, lang = 'en', roleIn = null) {
+  const role = ['farmer', 'traveller', 'fisherman', 'worker'].includes(roleIn) ? roleIn : null;
   const convo = messages.slice(-20)
     .filter(m => (m.role === 'user' || m.role === 'assistant') && typeof m.content === 'string' && m.content.trim())
     .map(m => ({ role: m.role, content: m.content.slice(0, 2000) }));
   if (!convo.length || convo[convo.length - 1].role !== 'user') throw new Error('last message must be from user');
 
   try {
-    if (GEMINI_KEY) return { ...(await viaGemini(convo, lang)), engine: 'gemini' };
-    if (claude) return { ...(await viaClaude(convo, lang)), engine: 'claude' };
+    if (GEMINI_KEY) return { ...(await viaGemini(convo, lang, role)), engine: 'gemini' };
+    if (claude) return { ...(await viaClaude(convo, lang, role)), engine: 'claude' };
   } catch (e) {
     console.error('AI engine failed, using basic mode instead:', e.message);
   }
-  return { ...(await answerBasic(convo, lang)), engine: 'basic' };
+  return { ...(await answerBasic(convo, lang, role)), engine: 'basic' };
 }

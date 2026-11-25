@@ -4,7 +4,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { reply, MODE } from './brain.js';
 import { diagnose, VERSION } from './tools.js';
-import { startTelegram, telegramRoutes, botUsername } from './telegram.js';
+import { startTelegram, telegramRoutes, botUsername, runAlertChecks } from './telegram.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT = process.env.PORT || 3000;
@@ -28,15 +28,24 @@ app.get('/api/diag', async (_req, res) => res.json({ ...(await diagnose()), mode
 app.get('/api/health', (_req, res) => res.json({ ok: true, version: VERSION, mode: MODE, telegram: Boolean(process.env.TELEGRAM_BOT_TOKEN), telegram_url: botUsername ? `https://t.me/${botUsername}` : null }));
 
 app.post('/api/chat', async (req, res) => {
-  const { messages, lang = 'en' } = req.body || {};
+  const { messages, lang = 'en', role = null } = req.body || {};
   if (!Array.isArray(messages) || !messages.length) return res.status(400).json({ error: 'messages required' });
   try {
-    const out = await reply(messages, lang);
+    const out = await reply(messages, lang, role);
     res.json({ reply: out.reply, tools_used: out.tools_used, engine: out.engine });
   } catch (e) {
     console.error(e);
     res.status(400).json({ error: 'Please send a message.' });
   }
+});
+
+// Optional: a free pinger (e.g. cron-job.org) can call /api/cron?key=YOUR_CRON_KEY every 30 minutes.
+// It wakes the sleeping server and sends due morning briefs and new alerts to Telegram subscribers.
+app.get('/api/cron', (req, res) => {
+  const key = process.env.CRON_KEY;
+  if (!key || req.query.key !== key) return res.sendStatus(404);
+  res.json({ ok: true, started: true });
+  runAlertChecks().then(r => console.log('Alert check finished:', JSON.stringify(r))).catch(e => console.error('Alert check failed:', e.message));
 });
 
 telegramRoutes(app);

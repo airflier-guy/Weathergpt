@@ -2,7 +2,8 @@
 // It detects intent (forecast / alerts / climate) and a place name with simple rules,
 // calls the same tools as the AI mode, and formats the answer in English, Hindi or Bengali.
 
-import { getForecast, getAlerts, getClimate } from './tools.js';
+import { getForecast, getAlerts, getClimate, getAdvice } from './tools.js';
+import { detectRole, renderRec, adviceHead, adviceData, adviceDisclaimer } from './advice.js';
 
 const STOP = new Set((
   // English
@@ -35,9 +36,12 @@ export function placeCandidates(place) {
 export function parseIntent(text) {
   const s = text.toLowerCase();
   const tokens = s.replace(/[?!.,।]/g, ' ').split(/\s+/);
+  const role = detectRole(text);
+  const base = /alert|warning|cyclone|heat ?wave|flood|storm|चेतावनी|সতর্ক/.test(s) ? 'alerts'
+          : /climate|average|normal|histor|जलवायु|জলবায়ু/.test(s) ? 'climate' : 'forecast';
   return {
-    intent: /alert|warning|cyclone|heat ?wave|flood|storm|चेतावनी|সতর্ক/.test(s) ? 'alerts'
-          : /climate|average|normal|histor|जलवायु|জলবায়ু/.test(s) ? 'climate' : 'forecast',
+    role,
+    intent: base === 'forecast' && role ? 'advice' : base,
     tomorrow: tokens.some(t => ['tomorrow', 'kal', 'कल', 'কাল', 'কালকে'].includes(t)),
     farm: /farm|crop|kisan|harvest|irrigat|खेती|किसान|सिंचाई|চাষ|সেচ/.test(s)
   };
@@ -63,7 +67,7 @@ const S = {
     farmWet: '🌾 Farming: postpone spraying and fertiliser; check field drainage.', farmDry: '🌾 Farming: good for harvesting and drying; irrigate early morning or evening.', farmOk: '🌾 Farming: normal field work is fine; watch the next 2–3 days for rain.',
     levels: { RED: '🔴 Red', ORANGE: '🟠 Orange' },
     types: { 'Extremely heavy rainfall (flood risk)': 'Extremely heavy rainfall (flood risk)', 'Very heavy rainfall': 'Very heavy rainfall', 'Heavy rainfall': 'Heavy rainfall', 'Severe heatwave': 'Severe heatwave', 'Heatwave conditions': 'Heatwave conditions', 'Thunderstorm': 'Thunderstorm', 'Very strong winds': 'Very strong winds', 'Strong winds': 'Strong winds' },
-    cond: {}, locale: 'en-IN'
+    code: 'en', confHigh: '🎯 Confidence: High – two independent sources agree.', confMed: '🎯 Confidence: Medium – two sources differ slightly. Re-check before important plans.', confLow: '🎯 Confidence: Low – two sources disagree. Treat this forecast as uncertain and re-check later.', legend: '🟢 sources agree · 🟡 small gap · 🔴 sources disagree', morning: '☀️ Good morning', alertNew: '🚨 New weather alert', cond: {}, locale: 'en-IN'
   },
   hi: {
     ask: 'आप किस स्थान की बात कर रहे हैं? जैसे: "कोलकाता का मौसम", "पुरी के लिए चेतावनी" या "शिमला की जलवायु"।',
@@ -80,7 +84,7 @@ const S = {
     levels: { RED: '🔴 लाल', ORANGE: '🟠 नारंगी' },
     types: { 'Extremely heavy rainfall (flood risk)': 'अत्यधिक भारी वर्षा (बाढ़ का खतरा)', 'Very heavy rainfall': 'बहुत भारी वर्षा', 'Heavy rainfall': 'भारी वर्षा', 'Severe heatwave': 'भीषण लू', 'Heatwave conditions': 'लू जैसी स्थिति', 'Thunderstorm': 'आँधी-तूफ़ान', 'Very strong winds': 'बहुत तेज़ हवाएँ', 'Strong winds': 'तेज़ हवाएँ' },
     cond: { 'Clear sky': 'साफ़ आसमान', 'Mostly clear': 'ज़्यादातर साफ़', 'Partly cloudy': 'आंशिक बादल', 'Overcast': 'घने बादल', 'Fog': 'कोहरा', 'Rime fog': 'कोहरा', 'Light drizzle': 'हल्की फुहार', 'Drizzle': 'फुहार', 'Heavy drizzle': 'तेज़ फुहार', 'Light rain': 'हल्की बारिश', 'Rain': 'बारिश', 'Heavy rain': 'भारी बारिश', 'Light snow': 'हल्की बर्फ़बारी', 'Snow': 'बर्फ़बारी', 'Heavy snow': 'भारी बर्फ़बारी', 'Rain showers': 'बौछारें', 'Violent rain showers': 'तेज़ बौछारें', 'Thunderstorm': 'आँधी-तूफ़ान', 'Thunderstorm with hail': 'ओलों के साथ तूफ़ान', 'Severe thunderstorm with hail': 'ओलों के साथ भीषण तूफ़ान' },
-    locale: 'hi-IN'
+    code: 'hi', confHigh: '🎯 भरोसा: उच्च – दो स्वतंत्र स्रोत सहमत हैं।', confMed: '🎯 भरोसा: मध्यम – दो स्रोतों में थोड़ा अंतर है। ज़रूरी योजना से पहले फिर देखें।', confLow: '🎯 भरोसा: कम – दो स्रोत असहमत हैं। इस पूर्वानुमान को अनिश्चित मानें, बाद में फिर देखें।', legend: '🟢 स्रोत सहमत · 🟡 थोड़ा अंतर · 🔴 स्रोत असहमत', morning: '☀️ सुप्रभात', alertNew: '🚨 नई मौसम चेतावनी', locale: 'hi-IN'
   },
   bn: {
     ask: 'কোন জায়গার কথা বলছেন? যেমন: "কলকাতার আবহাওয়া", "পুরীর সতর্কতা" বা "শিমলার জলবায়ু"।',
@@ -97,7 +101,7 @@ const S = {
     levels: { RED: '🔴 লাল', ORANGE: '🟠 কমলা' },
     types: { 'Extremely heavy rainfall (flood risk)': 'অত্যন্ত ভারী বৃষ্টি (বন্যার ঝুঁকি)', 'Very heavy rainfall': 'অতি ভারী বৃষ্টি', 'Heavy rainfall': 'ভারী বৃষ্টি', 'Severe heatwave': 'তীব্র তাপপ্রবাহ', 'Heatwave conditions': 'তাপপ্রবাহের পরিস্থিতি', 'Thunderstorm': 'বজ্রঝড়', 'Very strong winds': 'অতি প্রবল বাতাস', 'Strong winds': 'প্রবল বাতাস' },
     cond: { 'Clear sky': 'পরিষ্কার আকাশ', 'Mostly clear': 'মূলত পরিষ্কার', 'Partly cloudy': 'আংশিক মেঘলা', 'Overcast': 'মেঘলা', 'Fog': 'কুয়াশা', 'Rime fog': 'কুয়াশা', 'Light drizzle': 'হালকা গুঁড়ি বৃষ্টি', 'Drizzle': 'গুঁড়ি বৃষ্টি', 'Heavy drizzle': 'ঘন গুঁড়ি বৃষ্টি', 'Light rain': 'হালকা বৃষ্টি', 'Rain': 'বৃষ্টি', 'Heavy rain': 'ভারী বৃষ্টি', 'Light snow': 'হালকা তুষারপাত', 'Snow': 'তুষারপাত', 'Heavy snow': 'ভারী তুষারপাত', 'Rain showers': 'বৃষ্টির ঝাপটা', 'Violent rain showers': 'প্রবল বৃষ্টির ঝাপটা', 'Thunderstorm': 'বজ্রঝড়', 'Thunderstorm with hail': 'শিলাবৃষ্টিসহ ঝড়', 'Severe thunderstorm with hail': 'শিলাবৃষ্টিসহ প্রবল ঝড়' },
-    locale: 'bn-IN'
+    code: 'bn', confHigh: '🎯 নির্ভরযোগ্যতা: উচ্চ – দুটি স্বাধীন সূত্র একমত।', confMed: '🎯 নির্ভরযোগ্যতা: মাঝারি – দুই সূত্রে সামান্য পার্থক্য। জরুরি পরিকল্পনার আগে আবার দেখুন।', confLow: '🎯 নির্ভরযোগ্যতা: কম – দুই সূত্র একমত নয়। পূর্বাভাসটি অনিশ্চিত ধরুন, পরে আবার দেখুন।', legend: '🟢 সূত্র একমত · 🟡 সামান্য পার্থক্য · 🔴 সূত্র একমত নয়', morning: '☀️ শুভ সকাল', alertNew: '🚨 নতুন আবহাওয়া সতর্কতা', locale: 'bn-IN'
   }
 };
 
@@ -117,7 +121,7 @@ function adviceLines(day, tomorrowOrToday, farm, s) {
 const dayName = (iso, s) => new Date(iso + 'T12:00:00').toLocaleDateString(s.locale, { weekday: 'short', day: 'numeric', month: 'short' });
 const tc = (c, s) => s.cond[c] ?? c;
 
-function formatForecast(f, q, s) {
+export function formatForecast(f, q, s) {
   const c = f.current, d0 = f.daily[0], d1 = f.daily[1] ?? f.daily[0];
   const lines = [];
   if (q.tomorrow) {
@@ -129,14 +133,18 @@ function formatForecast(f, q, s) {
   }
   lines.push('');
   lines.push(...adviceLines(q.tomorrow ? d1 : d0, q.tomorrow, q.farm, s).map(x => `- ${x}`));
+  const shown = q.tomorrow ? d1 : d0, confText = { High: s.confHigh, Medium: s.confMed, Low: s.confLow }[shown.confidence];
+  if (confText) lines.push('', confText);
   lines.push('');
   lines.push(`**${s.week}**`);
-  f.daily.forEach((d, i) => lines.push(`- **${i === 0 ? s.today : dayName(d.date, s)}**: ${icon(d.condition)} ${Math.round(d.max)}° / ${Math.round(d.min)}° · ${s.rain} ${d.rain_probability_pct}%`));
+  const dot = { High: ' 🟢', Medium: ' 🟡', Low: ' 🔴' };
+  f.daily.forEach((d, i) => lines.push(`- **${i === 0 ? s.today : dayName(d.date, s)}**: ${icon(d.condition)} ${Math.round(d.max)}° / ${Math.round(d.min)}° · ${s.rain} ${d.rain_probability_pct}%${dot[d.confidence] || ''}`));
+  if (f.daily.some(d => d.confidence)) lines.push('', s.legend);
   if (/backup/i.test(f.source || '')) lines.push('', s.backup);
   return lines.join('\n');
 }
 
-function formatAlerts(a, s) {
+export function formatAlerts(a, s) {
   const lines = [`**${a.place} – ${s.alertsTitle}**`];
   if (!a.alerts.length) lines.push(`✅ ${s.none}`);
   else a.alerts.forEach(x => lines.push(`- ${s.levels[x.level] ?? x.level} · **${dayName(x.date, s)}**: ${s.types[x.type] ?? x.type} (${x.value})`));
@@ -158,6 +166,31 @@ function formatClimate(c, s) {
   return lines.join('\n');
 }
 
+export const strings = lang => S[lang] || S.en;
+
+function formatAdvice(a, s) {
+  const lines = [`**${a.place} – ${adviceHead(a.role, s.code)}**`, adviceData(a.summary, s.code), ''];
+  a.recommendations.forEach(r => lines.push(`- ${renderRec(r, s.code)}`));
+  lines.push('', adviceDisclaimer(s.code));
+  return lines.join('\n');
+}
+
+// Short morning message for Telegram subscribers: today, confidence, advice for their role, and any alerts.
+export async function buildBrief(sub) {
+  const s = S[sub.lang] || S.en, role = sub.role || 'traveller';
+  const f = await getForecast({ loc: sub.loc });
+  const [al, ad] = await Promise.allSettled([getAlerts({ loc: sub.loc }), getAdvice({ loc: sub.loc, role })]);
+  const c = f.current, d0 = f.daily[0];
+  const lines = [`${s.morning}! **${f.place}**`,
+    `🌡️ ${Math.round(c.temperature)}°C (${s.feels} ${Math.round(c.feels_like)}°C) · ${icon(c.condition)} ${tc(c.condition, s)}`,
+    `${s.today}: ${icon(d0.condition)} ${Math.round(d0.max)}° / ${Math.round(d0.min)}° · ${s.rain} ${d0.rain_probability_pct}%`];
+  const confText = { High: s.confHigh, Medium: s.confMed, Low: s.confLow }[d0.confidence];
+  if (confText) lines.push(confText);
+  if (ad.status === 'fulfilled') { lines.push('', `**${adviceHead(role, s.code)}**`); ad.value.recommendations.forEach(r => lines.push(`- ${renderRec(r, s.code)}`)); }
+  if (al.status === 'fulfilled' && al.value.alerts.length) lines.push('', formatAlerts(al.value, s));
+  return lines.join('\n');
+}
+
 /* ---------------- entry point ---------------- */
 const reasonOf = e => {
   const st = e.status || (/Upstream error (\d+)/.exec(e.message) || [])[1];
@@ -165,7 +198,7 @@ const reasonOf = e => {
   return `could not reach the weather service${e.cause?.code ? ' (' + e.cause.code + ')' : ''}`;
 };
 
-export async function answerBasic(messages, lang = 'en') {
+export async function answerBasic(messages, lang = 'en', uiRole = null) {
   const s = S[lang] || S.en;
   const users = messages.filter(m => m.role === 'user').map(m => m.content);
   const last = users[users.length - 1] || '';
@@ -183,7 +216,15 @@ export async function answerBasic(messages, lang = 'en') {
       let text;
       if (q.intent === 'alerts') { tools_used.push({ name: 'get_alerts', input: { place: p } }); text = formatAlerts(await getAlerts({ place: p }), s); }
       else if (q.intent === 'climate') { tools_used.push({ name: 'get_climate', input: { place: p } }); text = formatClimate(await getClimate({ place: p }), s); }
-      else { tools_used.push({ name: 'get_forecast', input: { place: p } }); text = formatForecast(await getForecast({ place: p }), q, s); }
+      else if (q.intent === 'advice') { tools_used.push({ name: 'get_advice', input: { place: p, role: q.role } }); text = formatAdvice(await getAdvice({ place: p, role: q.role }), s); }
+      else {
+        tools_used.push({ name: 'get_forecast', input: { place: p } });
+        const fc = await getForecast({ place: p });
+        text = formatForecast(fc, q, s);
+        if (uiRole) { // the user picked a role in the app: add that role's advice under the forecast
+          try { const ad = await getAdvice({ loc: fc.loc, role: uiRole }); tools_used.push({ name: 'get_advice', input: { place: p, role: uiRole } }); text += '\n\n' + formatAdvice(ad, s); } catch (e) { console.error('Advice skipped:', e.message); }
+        }
+      }
       return { reply: text, tools_used };
     } catch (e) {
       if (/Could not find a place/.test(e.message)) { if (i < candidates.length - 1) continue; return { reply: s.notFound(place), tools_used }; }

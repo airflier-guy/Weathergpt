@@ -4,6 +4,7 @@
 
 import crypto from 'node:crypto';
 import { reply } from './brain.js';
+import { handleSubCommand, runChecks, startScheduler, storageKind } from './subs.js';
 
 const TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 export let botUsername = null;
@@ -18,9 +19,9 @@ const SECRET = TOKEN ? crypto.createHash('sha256').update('wg:' + TOKEN).digest(
 
 const chats = new Map(); // chatId -> { lang, history }
 const WELCOME = {
-  en: "Hi! I'm WeatherGPT 🌦️\nAsk me for a forecast, weather alerts or climate info for any place, e.g. \"weather in Kolkata\" or \"alerts for Puri\".\nLanguage: /english  /hindi  /bengali",
-  hi: "नमस्ते! मैं WeatherGPT हूँ 🌦️\nकिसी भी स्थान का मौसम, चेतावनी या जलवायु पूछें, जैसे \"कोलकाता का मौसम\"।\nभाषा: /english  /hindi  /bengali",
-  bn: "নমস্কার! আমি WeatherGPT 🌦️\nযেকোনো জায়গার আবহাওয়া, সতর্কতা বা জলবায়ু জিজ্ঞাসা করুন, যেমন \"কলকাতার আবহাওয়া\"।\nভাষা: /english  /hindi  /bengali"
+  en: "Hi! I'm WeatherGPT 🌦️\nAsk me for a forecast, weather alerts or climate info for any place, e.g. \"weather in Kolkata\" or \"alerts for Puri\".\nLanguage: /english  /hindi  /bengali\n🔔 Daily brief + alerts: /subscribe Puri farmer",
+  hi: "नमस्ते! मैं WeatherGPT हूँ 🌦️\nकिसी भी स्थान का मौसम, चेतावनी या जलवायु पूछें, जैसे \"कोलकाता का मौसम\"।\nभाषा: /english  /hindi  /bengali\n🔔 रोज़ सारांश और चेतावनी: /subscribe Puri farmer",
+  bn: "নমস্কার! আমি WeatherGPT 🌦️\nযেকোনো জায়গার আবহাওয়া, সতর্কতা বা জলবায়ু জিজ্ঞাসা করুন, যেমন \"কলকাতার আবহাওয়া\"।\nভাষা: /english  /hindi  /bengali\n🔔 প্রতিদিনের সারসংক্ষেপ ও সতর্কতা: /subscribe Puri farmer"
 };
 const LANGS = { '/english': 'en', '/hindi': 'hi', '/bengali': 'bn' };
 
@@ -28,6 +29,8 @@ async function tg(method, body) {
   const r = await fetch(`${API}/${method}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body), signal: AbortSignal.timeout(45000) });
   return r.json();
 }
+export const sendTelegram = (chatId, text) => tg('sendMessage', { chat_id: chatId, text: plain(text) });
+export const runAlertChecks = () => runChecks(sendTelegram);
 const plain = s => s.replace(/\*\*/g, '').slice(0, 4000);
 
 async function handle(msg) {
@@ -39,6 +42,11 @@ async function handle(msg) {
   const cmd = text.split(/\s|@/)[0].toLowerCase();
   if (cmd === '/start' || cmd === '/help') return tg('sendMessage', { chat_id: id, text: WELCOME[st.lang] });
   if (LANGS[cmd]) { st.lang = LANGS[cmd]; st.history = []; return tg('sendMessage', { chat_id: id, text: WELCOME[st.lang] }); }
+
+  if (['/subscribe', '/unsubscribe', '/mysubs'].includes(cmd)) {
+    const args = text.replace(/^\S+\s*/, '');
+    return tg('sendMessage', { chat_id: id, text: await handleSubCommand(id, cmd, args, st.lang) }).catch(() => {});
+  }
 
   tg('sendChatAction', { chat_id: id, action: 'typing' }).catch(() => {});
   st.history.push({ role: 'user', content: text });
@@ -70,6 +78,8 @@ export async function startTelegram() {
   const me = await tg('getMe', {}).catch(() => null);
   if (!me?.ok) { console.error('Telegram: token looks wrong (getMe failed). Bot not started.'); return; }
   botUsername = me.result.username;
+  startScheduler(sendTelegram);
+  console.log(`Subscriptions storage: ${storageKind}`);
   if (WEBHOOK_MODE) {
     const r = await tg('setWebhook', { url: `${PUBLIC_URL}/telegram/webhook`, secret_token: SECRET, allowed_updates: ['message'], drop_pending_updates: false });
     if (!r?.ok) { console.error('Telegram: could not set the webhook:', r?.description); return; }

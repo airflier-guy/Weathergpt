@@ -1,13 +1,17 @@
 // Weather tools that Claude can call.
 // Main source: Open-Meteo (free, no key). Backup when Open-Meteo refuses (e.g. 429 on shared cloud servers):
 // MET Norway (free, no key) for forecasts and OpenStreetMap Nominatim for finding places.
+// Extras: forecast CONFIDENCE (two sources compared) and role-based ADVICE (farmer / traveller / fisherman / worker).
+
+import { computeAdvice, renderRec, ROLES } from './advice.js';
 
 const GEO = 'https://geocoding-api.open-meteo.com/v1/search';
 const FORECAST = 'https://api.open-meteo.com/v1/forecast';
 const ARCHIVE = 'https://archive-api.open-meteo.com/v1/archive';
-export const VERSION = '2026-10-24-c';
+export const VERSION = '2026-11-25-a';
 const UA = `WeatherGPT/${VERSION} (+${process.env.RENDER_EXTERNAL_URL || 'https://github.com/weathergpt-sih'}; student hackathon project)`;
 const MET = 'https://api.met.no/weatherapi/locationforecast/2.0/compact';
+const MARINE = 'https://marine-api.open-meteo.com/v1/marine';
 const NOMINATIM = 'https://nominatim.openstreetmap.org/search';
 
 const WMO = {
@@ -40,7 +44,7 @@ async function geocodeNominatim(place) {
   return { lat: +g[0].lat, lon: +g[0].lon, name };
 }
 
-async function geocode(place) {
+export async function geocode(place) {
   try {
     const g = await getJSON(`${GEO}?name=${encodeURIComponent(place)}&count=1&language=en`);
     if (g.results?.length) {
@@ -50,6 +54,8 @@ async function geocode(place) {
   } catch (e) { console.error(`Open-Meteo place search failed (${e.message}); trying OpenStreetMap.`); }
   return geocodeNominatim(place); // also used when Open-Meteo simply does not know the place
 }
+
+const locOf = input => input.loc || geocode(input.place);
 
 async function openMeteoForecast(loc, days) {
   const url = `${FORECAST}?latitude=${loc.lat}&longitude=${loc.lon}` +
@@ -122,13 +128,41 @@ async function rawForecast(loc, days = 7) {
   }
 }
 
-export async function getForecast({ place, days = 7 }) {
-  const loc = await geocode(place);
-  const w = await rawForecast(loc, Math.min(Math.max(days, 1), 7));
+// Compare the two independent forecasts day by day. Today's temperature is skipped (MET's "today" is only the hours left).
+function crossCheck(a, b) {
+  const out = {};
+  a.time.forEach((date, i) => {
+    const j = b.time.indexOf(date);
+    if (j < 0) return;
+    const dT = i === 0 ? 0 : Math.abs(a.temperature_2m_max[i] - b.temperature_2m_max[j]);
+    const ra = a.precipitation_sum[i] || 0, rb = b.precipitation_sum[j] || 0, dR = Math.abs(ra - rb), big = Math.max(ra, rb);
+    let level = 'High';
+    if (dT >= 4 || (((ra >= 1) !== (rb >= 1)) && dR >= 2) || dR > Math.max(10, 0.5 * big)) level = 'Low';
+    else if (dT >= 2 || dR > Math.max(3, 0.3 * big)) level = 'Medium';
+    out[date] = { level, temp_gap_c: +dT.toFixed(1), rain_gap_mm: +dR.toFixed(1) };
+  });
+  return out;
+}
+
+export async function getForecast(input) {
+  const loc = await locOf(input);
+  const days = Math.min(Math.max(input.days || 7, 1), 7);
+  const [om, met] = await Promise.allSettled([openMeteoForecast(loc, days), metForecast(loc, days)]);
+  let w, check = {}, sources;
+  if (om.status === 'fulfilled') {
+    w = om.value; sources = ['Open-Meteo'];
+    if (met.status === 'fulfilled') { check = crossCheck(w.daily, met.value.daily); sources.push('MET Norway'); }
+    else console.error(`MET Norway cross-check unavailable (${met.reason?.message}).`);
+  } else if (met.status === 'fulfilled') {
+    console.error(`Open-Meteo forecast failed (${om.reason?.message}). Using MET Norway backup.`);
+    w = met.value; sources = ['MET Norway (backup)'];
+  } else throw om.reason;
   const d = w.daily;
   return {
     place: loc.name,
+    loc: { lat: loc.lat, lon: loc.lon, name: loc.name },
     source: w._source || 'Open-Meteo',
+    sources_compared: sources,
     units: 'Celsius, km/h, mm',
     current: {
       temperature: w.current.temperature_2m,
@@ -145,15 +179,70 @@ export async function getForecast({ place, days = 7 }) {
       rain_probability_pct: d.precipitation_probability_max[i],
       rain_mm: d.precipitation_sum[i],
       max_wind_kmh: d.wind_speed_10m_max[i],
-      uv_index: d.uv_index_max[i]
+      uv_index: d.uv_index_max[i],
+      confidence: check[date]?.level ?? null, // High / Medium / Low = how closely two independent sources agree
+      confidence_detail: check[date] ?? null
     }))
+  };
+}
+
+// ---- Role-based advice: hourly data -> concrete decisions (spray window, irrigate or not, safe sailing hours ...) ----
+async function hourlyOpenMeteo(loc) {
+  const j = await getJSON(`${FORECAST}?latitude=${loc.lat}&longitude=${loc.lon}` +
+    `&hourly=temperature_2m,apparent_temperature,precipitation,precipitation_probability,wind_speed_10m,wind_gusts_10m,soil_moisture_3_to_9cm` +
+    `&daily=et0_fao_evapotranspiration,precipitation_sum&timezone=auto&forecast_days=3`);
+  const off = j.utc_offset_seconds ?? 0, nowKey = new Date(Date.now() + off * 1000).toISOString().slice(0, 13), h = j.hourly;
+  const hours = h.time.map((t, i) => ({
+    t, temp: h.temperature_2m[i], feels: h.apparent_temperature[i], rain: h.precipitation[i] || 0, pop: h.precipitation_probability[i],
+    wind: h.wind_speed_10m[i], gust: h.wind_gusts_10m[i], soil: h.soil_moisture_3_to_9cm?.[i] ?? null
+  })).filter(x => x.t.slice(0, 13) >= nowKey);
+  return { hours, daily: { et0: j.daily?.et0_fao_evapotranspiration || [], rain: j.daily?.precipitation_sum || [] }, source: 'Open-Meteo' };
+}
+
+async function hourlyMet(loc) {
+  const j = await getJSON(`${MET}?lat=${loc.lat.toFixed(4)}&lon=${loc.lon.toFixed(4)}`);
+  const off = tzOffsetHours(loc.lat, loc.lon), nowKey = new Date(Date.now() + off * 3600e3).toISOString().slice(0, 13);
+  const hours = j.properties.timeseries.filter(e => e.data.next_1_hours).map(e => {
+    const i = e.data.instant.details, t = new Date(new Date(e.time).getTime() + off * 3600e3).toISOString().slice(0, 16);
+    const wind = (i.wind_speed || 0) * 3.6, T = i.air_temperature, RH = i.relative_humidity ?? 50, ws = i.wind_speed || 0;
+    const ev = RH / 100 * 6.105 * Math.exp(17.27 * T / (237.7 + T));
+    return { t, temp: T, feels: T + 0.33 * ev - 0.70 * ws - 4.0, rain: e.data.next_1_hours.details?.precipitation_amount || 0,
+      pop: estimateRainChance(e.data.next_1_hours.details?.precipitation_amount || 0), wind, gust: wind * 1.5, soil: null };
+  }).filter(x => x.t.slice(0, 13) >= nowKey).slice(0, 48);
+  return { hours, daily: { et0: [], rain: [] }, source: 'MET Norway (backup)' };
+}
+
+async function waveHeights(loc) { // coastal points only; inland places simply return nothing
+  try {
+    const j = await getJSON(`${MARINE}?latitude=${loc.lat}&longitude=${loc.lon}&hourly=wave_height&timezone=auto&forecast_days=3`);
+    return new Map(j.hourly.time.map((t, i) => [t, j.hourly.wave_height[i]]));
+  } catch { return null; }
+}
+
+export async function getAdvice(input) {
+  const role = ROLES.includes(input.role) ? input.role : 'traveller';
+  const loc = await locOf(input);
+  let data;
+  try { data = await hourlyOpenMeteo(loc); }
+  catch (e) { console.error(`Open-Meteo hourly failed (${e.message}). Using MET Norway backup.`); data = await hourlyMet(loc); }
+  if (role === 'fisherman') {
+    const waves = await waveHeights(loc);
+    if (waves) data.hours.forEach(h => { const v = waves.get(h.t.slice(0, 13) + ':00'); h.wave = v ?? null; });
+  }
+  if (!data.hours.length) throw new Error('No hourly forecast available');
+  const { recommendations, summary } = computeAdvice(role, data.hours, data.daily);
+  return {
+    place: loc.name, loc: { lat: loc.lat, lon: loc.lon, name: loc.name }, role, source: data.source,
+    summary, recommendations,
+    advice: recommendations.map(r => renderRec(r, 'en')),
+    note: 'Rule-of-thumb guidance from forecast data, not an official advisory.'
   };
 }
 
 // Alerts are derived from forecast values using IMD-style thresholds.
 // They are NOT official warnings; the assistant must say so.
-export async function getAlerts({ place }) {
-  const loc = await geocode(place);
+export async function getAlerts(input) {
+  const loc = await locOf(input);
   const w = await rawForecast(loc, 7);
   const d = w.daily, alerts = [];
   d.time.forEach((date, i) => {
@@ -169,14 +258,15 @@ export async function getAlerts({ place }) {
   });
   return {
     place: loc.name,
+    loc: { lat: loc.lat, lon: loc.lon, name: loc.name },
     generated_from: 'Open-Meteo forecast with IMD-style rainfall/heat thresholds (not official warnings)',
     alerts,
     note: alerts.length ? undefined : 'No threshold breaches in the next 7 days.'
   };
 }
 
-export async function getClimate({ place }) {
-  const loc = await geocode(place);
+export async function getClimate(input) {
+  const loc = await locOf(input);
   const end = new Date().getFullYear() - 1, start = end - 4;
   const a = await getJSON(`${ARCHIVE}?latitude=${loc.lat}&longitude=${loc.lon}&start_date=${start}-01-01&end_date=${end}-12-31&daily=temperature_2m_mean,precipitation_sum&timezone=auto`);
   const tSum = Array(12).fill(0), tN = Array(12).fill(0), rSum = Array(12).fill(0);
@@ -202,7 +292,7 @@ const placeProp = { type: 'string', description: 'City, town or district name, e
 export const TOOLS = [
   {
     name: 'get_forecast',
-    description: 'Get current weather and a daily forecast (up to 7 days) for a place: temperature, rain chance and amount, wind, UV, conditions.',
+    description: 'Get current weather and a daily forecast (up to 7 days) for a place: temperature, rain chance and amount, wind, UV, conditions. Each day has a confidence level (High/Medium/Low) from comparing two independent weather sources.',
     input_schema: { type: 'object', properties: { place: placeProp, days: { type: 'integer', description: 'Number of days, 1-7 (default 7)' } }, required: ['place'] }
   },
   {
@@ -211,13 +301,18 @@ export const TOOLS = [
     input_schema: { type: 'object', properties: { place: placeProp }, required: ['place'] }
   },
   {
+    name: 'get_advice',
+    description: 'Role-based action advice from hourly data: for a farmer the best spraying window, whether to irrigate and harvest days; for a traveller the best dry hours; for a fisherman safe hours at sea; for an outdoor worker hours to avoid heat. Use it when the user describes their job or asks what they should DO (spray, irrigate, travel, go fishing, work outside).',
+    input_schema: { type: 'object', properties: { place: placeProp, role: { type: 'string', enum: ROLES, description: 'farmer, traveller, fisherman or worker' } }, required: ['place', 'role'] }
+  },
+  {
     name: 'get_climate',
     description: 'Get climate information for a place: average monthly temperature and rainfall over the last 5 years.',
     input_schema: { type: 'object', properties: { place: placeProp }, required: ['place'] }
   }
 ];
 
-const IMPL = { get_forecast: getForecast, get_alerts: getAlerts, get_climate: getClimate };
+const IMPL = { get_forecast: getForecast, get_alerts: getAlerts, get_climate: getClimate, get_advice: getAdvice };
 
 export async function runTool(name, input) {
   const fn = IMPL[name];
@@ -238,6 +333,8 @@ export async function diagnose() {
     check('Open-Meteo places', `${GEO}?name=Kolkata&count=1`),
     check('Open-Meteo forecast', `${FORECAST}?latitude=22.57&longitude=88.36&current=temperature_2m`),
     check('Open-Meteo climate archive', `${ARCHIVE}?latitude=22.57&longitude=88.36&start_date=2024-01-01&end_date=2024-01-02&daily=temperature_2m_mean`),
+    check('Open-Meteo hourly (advice)', `${FORECAST}?latitude=22.57&longitude=88.36&hourly=soil_moisture_3_to_9cm&forecast_days=1`),
+    check('Open-Meteo marine (fishermen)', `${MARINE}?latitude=19.8&longitude=85.8&hourly=wave_height&forecast_days=1`),
     check('MET Norway forecast (backup)', `${MET}?lat=22.57&lon=88.36`),
     check('OpenStreetMap places (backup)', `${NOMINATIM}?q=Kolkata&format=json&limit=1`),
     check('Telegram', 'https://api.telegram.org/'),

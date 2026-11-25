@@ -63,3 +63,20 @@ See `GUIDE` (the step-by-step guide) for details. `/api/health` shows the active
 - SMS / WhatsApp channel for low-connectivity farmers
 - Crop-specific advisories (sowing, spraying, irrigation windows)
 - Save user places and push alerts
+
+## What makes this WeatherGPT different (v2026-11-25)
+
+1. **Forecast confidence.** Every forecast compares two independent sources (Open-Meteo and MET Norway) and marks each day
+   🟢 sources agree / 🟡 small gap / 🔴 sources disagree.
+2. **Role-based action advice.** Pick Farmer, Traveller, Fisherman or Outdoor worker (or just say what you do). You get
+   decisions, not numbers: best spraying window, irrigate or not (evapotranspiration + soil moisture + rain), dry travel hours,
+   safe hours at sea (gusts + wave height), hours to avoid heat. Rule-of-thumb guidance, not an official advisory.
+3. **Proactive Telegram alerts.** `/subscribe Puri farmer` gives a morning brief (about 07:00 IST) and an instant message when
+   a new heavy-rain, heat, thunderstorm or wind alert appears. `/mysubs` lists, `/unsubscribe` stops.
+
+### Setting up subscriptions on Render (free)
+- Subscriptions are saved in a file, and free hosts erase files when the server sleeps. For lasting storage create a free
+  Redis database at upstash.com and add `UPSTASH_REDIS_REST_URL` and `UPSTASH_REDIS_REST_TOKEN` in Render > Environment.
+- Add `CRON_KEY` (any secret word) in Render > Environment. Then create a free job at cron-job.org that opens
+  `https://YOUR-APP.onrender.com/api/cron?key=YOUR_CRON_KEY` every 30 minutes. This wakes the server and sends due messages.
+- Without these two steps everything else still works; subscriptions just stop when the server sleeps.
