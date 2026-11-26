@@ -1,0 +1,261 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>WeatherGPT</title>
+<link rel="manifest" href="/manifest.json">
+<meta name="theme-color" content="#0f172a">
+<link rel="icon" href="/icons/icon-192.png">
+<link rel="apple-touch-icon" href="/icons/apple-touch-icon.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="WeatherGPT">
+<style>
+  :root { --bg:#0f172a; --card:#1e293b; --me:#2563eb; --text:#e2e8f0; --muted:#94a3b8; --accent:#38bdf8; }
+  * { box-sizing:border-box; }
+  body { margin:0; font-family:system-ui,"Noto Sans Devanagari","Noto Sans Bengali",Segoe UI,Roboto,sans-serif; background:var(--bg); color:var(--text); height:100dvh; display:flex; flex-direction:column; }
+  header { flex-wrap:wrap; padding:12px 16px; border-bottom:1px solid #334155; display:flex; align-items:center; gap:10px; }
+  header h1 { font-size:18px; margin:0; }
+  header span { color:var(--muted); font-size:12px; flex:1; }
+  select, #clear, #hist { background:var(--card); color:var(--text); border:1px solid #334155; border-radius:8px; padding:6px 8px; cursor:pointer; }
+  #chat { flex:1; overflow-y:auto; padding:16px; display:flex; flex-direction:column; gap:12px; max-width:800px; width:100%; margin:0 auto; }
+  .msg { max-width:92%; padding:10px 14px; border-radius:14px; line-height:1.5; word-wrap:break-word; }
+  .bot { background:var(--card); align-self:flex-start; }
+  .me { background:var(--me); align-self:flex-end; white-space:pre-wrap; }
+  .bot p { margin:0 0 8px; } .bot p:last-child { margin:0; }
+  .bot ul { margin:4px 0 8px; padding-left:20px; }
+  .tools { margin-top:8px; font-size:11px; color:var(--muted); }
+  .dots span { animation:b 1.2s infinite; display:inline-block; } .dots span:nth-child(2){animation-delay:.2s} .dots span:nth-child(3){animation-delay:.4s}
+  @keyframes b { 0%,60%,100%{opacity:.2} 30%{opacity:1} }
+  .chips { display:flex; flex-wrap:wrap; gap:8px; max-width:800px; width:100%; margin:0 auto; padding:0 16px 8px; }
+  .chips button { background:transparent; border:1px solid #334155; color:var(--muted); border-radius:999px; padding:6px 12px; cursor:pointer; font-size:13px; }
+  form { display:flex; gap:8px; padding:12px 16px; max-width:800px; width:100%; margin:0 auto; }
+  input { flex:1; padding:12px 14px; border-radius:10px; border:1px solid #334155; background:var(--card); color:var(--text); font-size:15px; min-width:0; }
+  form button { background:var(--accent); border:0; border-radius:10px; padding:0 16px; font-weight:600; cursor:pointer; }
+  #mic { background:var(--card); color:var(--text); border:1px solid #334155; }
+  #speak.off { opacity:.4; }
+
+  .msg .actions { margin-top:6px; display:flex; gap:10px; }
+  .copy { background:transparent; border:0; color:var(--muted); font-size:12px; cursor:pointer; padding:2px 0; }
+  .copy:hover { color:var(--accent); }
+  .me .copy { color:#bfdbfe; }
+  #role { border-color:var(--accent); }
+  #drawer { position:fixed; top:0; left:0; bottom:0; width:290px; max-width:85vw; background:#0b1220; border-right:1px solid #334155; z-index:20; display:flex; flex-direction:column; padding:12px; gap:8px; }
+  #drawer[hidden], #scrim[hidden] { display:none; }
+  #scrim { position:fixed; inset:0; background:rgba(0,0,0,.5); z-index:10; }
+  .dhead { display:flex; justify-content:space-between; align-items:center; }
+  .dhead button { background:transparent; border:0; color:var(--text); font-size:18px; cursor:pointer; }
+  #dnew, #dclear { background:var(--card); color:var(--text); border:1px solid #334155; border-radius:8px; padding:8px; cursor:pointer; }
+  #dclear { color:#fca5a5; font-size:12px; }
+  #dlist { flex:1; overflow-y:auto; display:flex; flex-direction:column; gap:6px; }
+  .ditem { display:flex; align-items:center; gap:6px; background:var(--card); border:1px solid #334155; border-radius:8px; padding:8px 10px; cursor:pointer; }
+  .ditem.on { border-color:var(--accent); }
+  .ditem span { flex:1; font-size:13px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .ditem small { color:var(--muted); font-size:11px; display:block; }
+  .ditem button { background:transparent; border:0; color:var(--muted); cursor:pointer; font-size:14px; }
+  .dempty { color:var(--muted); font-size:13px; padding:8px; }
+  @media (max-width:700px) { #tag { display:none; } }
+</style>
+</head>
+<body>
+<header>
+  <button id="hist" type="button" title="Chat history" style="padding:6px 10px">☰</button>
+  <h1>🌦️ WeatherGPT</h1>
+  <span id="tag"></span>
+  <a id="tglink" href="#" target="_blank" rel="noopener" style="display:none;color:var(--accent);font-size:13px;text-decoration:none;white-space:nowrap">✈️ Telegram</a>
+  <button id="install" type="button" hidden style="background:var(--accent);color:#04202e;border:0;border-radius:8px;padding:6px 10px;font-weight:600;cursor:pointer;font-size:13px">⬇ Install app</button>
+  <button id="speak" class="off" type="button" style="background:var(--card);border:1px solid #334155;border-radius:8px;padding:6px 8px;cursor:pointer;color:var(--text)" title="Read replies aloud">🔊</button>
+  <select id="role" title="I am a...">
+    <option value="">👤 Role: none</option>
+    <option value="farmer">🌾 Farmer</option>
+    <option value="traveller">🚗 Traveller</option>
+    <option value="fisherman">🎣 Fisherman</option>
+    <option value="worker">🛠️ Outdoor worker</option>
+  </select>
+  <select id="lang" title="Language">
+    <option value="en">English</option>
+    <option value="hi">हिन्दी</option>
+    <option value="bn">বাংলা</option>
+  </select>
+  <button id="clear" type="button" title="New chat">↺</button>
+</header>
+<div id="scrim" hidden></div>
+<aside id="drawer" hidden>
+  <div class="dhead"><b>🕘 Chat history</b><button id="dclose" type="button" title="Close">✕</button></div>
+  <button id="dnew" type="button">＋ New chat</button>
+  <div id="dlist"></div>
+  <button id="dclear" type="button">Delete all history</button>
+</aside>
+<div id="chat"></div>
+<div class="chips" id="chips"></div>
+<form id="form">
+  <input id="q" autocomplete="off">
+  <button type="button" id="mic" title="Speak">🎤</button>
+  <button id="send">➤</button>
+</form>
+
+<script>
+const UI = {
+  en: { tag:'Forecasts · Alerts · Climate', ph:'Ask about weather, alerts or climate…', hi:"Hi! I'm WeatherGPT 👋 Ask me for a forecast, weather alerts or climate information for any place. I can also give travel, health and farming advice.", err:'Something went wrong. Please try again.',
+        chips:['Weather in Kolkata this week','Will it rain tomorrow in Mumbai? Do I need an umbrella?','Any weather alerts for Puri?','What is the climate of Shimla like?','I am a farmer near Ludhiana. When should I irrigate?'] },
+  hi: { tag:'पूर्वानुमान · चेतावनी · जलवायु', ph:'मौसम, चेतावनी या जलवायु के बारे में पूछें…', hi:'नमस्ते! मैं WeatherGPT हूँ 👋 किसी भी स्थान का पूर्वानुमान, मौसम चेतावनी या जलवायु जानकारी पूछें। यात्रा, स्वास्थ्य और खेती की सलाह भी मिलेगी।', err:'कुछ गड़बड़ हुई। फिर कोशिश करें।',
+        chips:['कोलकाता का इस हफ़्ते का मौसम','कल मुंबई में बारिश होगी? छाता चाहिए?','पुरी के लिए कोई चेतावनी?','शिमला की जलवायु कैसी है?','मैं लुधियाना के पास किसान हूँ। सिंचाई कब करूँ?'] },
+  bn: { tag:'পূর্বাভাস · সতর্কতা · জলবায়ু', ph:'আবহাওয়া, সতর্কতা বা জলবায়ু সম্পর্কে জিজ্ঞাসা করুন…', hi:'নমস্কার! আমি WeatherGPT 👋 যেকোনো জায়গার পূর্বাভাস, আবহাওয়া সতর্কতা বা জলবায়ু তথ্য জিজ্ঞাসা করুন। ভ্রমণ, স্বাস্থ্য ও চাষের পরামর্শও পাবেন।', err:'কিছু ভুল হয়েছে। আবার চেষ্টা করুন।',
+        chips:['এই সপ্তাহে কলকাতার আবহাওয়া','কাল মুম্বাইয়ে বৃষ্টি হবে? ছাতা লাগবে?','পুরীর জন্য কোনো সতর্কতা আছে?','শিমলার জলবায়ু কেমন?','আমি লুধিয়ানার কাছে চাষি। কখন সেচ দেব?'] }
+};
+const LANG_CODE = { en:'en-IN', hi:'hi-IN', bn:'bn-IN' };
+let lang = localStorage.getItem('wg_lang') || 'en';
+let history = [];
+let speakOn = false;
+let role = ''; try { role = localStorage.getItem('wg_role') || ''; } catch (e) {}
+const chat = document.getElementById('chat');
+const $ = id => document.getElementById(id);
+
+const esc = s => s.replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+function md(text) {                       // tiny, safe markdown: **bold**, lists, paragraphs
+  const lines = esc(text).split('\n'); let out = '', inList = false;
+  for (const raw of lines) {
+    const line = raw.replace(/\*\*(.+?)\*\*/g, '<b>$1</b>');
+    const li = line.match(/^\s*[-*•]\s+(.*)/);
+    if (li) { if (!inList) { out += '<ul>'; inList = true; } out += `<li>${li[1]}</li>`; }
+    else { if (inList) { out += '</ul>'; inList = false; } if (line.trim()) out += `<p>${line}</p>`; }
+  }
+  return out + (inList ? '</ul>' : '');
+}
+function add(html, who = 'bot', raw = null) {
+  const d = document.createElement('div'); d.className = 'msg ' + who;
+  d.innerHTML = '<div class="body"></div>'; d.firstChild.innerHTML = html;
+  if (raw != null) attachCopy(d, raw);
+  chat.appendChild(d); chat.scrollTop = chat.scrollHeight; return d;
+}
+function attachCopy(d, raw) {
+  d.querySelector('.actions')?.remove();
+  const bar = document.createElement('div'); bar.className = 'actions';
+  const btn = document.createElement('button'); btn.type = 'button'; btn.className = 'copy'; btn.textContent = '⧉ Copy';
+  btn.onclick = () => copyText(raw, btn);
+  bar.appendChild(btn); d.appendChild(bar);
+}
+async function copyText(t, btn) {
+  try { await navigator.clipboard.writeText(t); }
+  catch (e) { const ta = document.createElement('textarea'); ta.value = t; document.body.appendChild(ta); ta.select(); try { document.execCommand('copy'); } catch (_) {} ta.remove(); }
+  const o = btn.textContent; btn.textContent = '✓ Copied'; setTimeout(() => { btn.textContent = o; }, 1200);
+}
+function speak(text) {
+  if (!speakOn || !('speechSynthesis' in window)) return;
+  const u = new SpeechSynthesisUtterance(text.replace(/[*_#]/g, ''));
+  u.lang = LANG_CODE[lang]; speechSynthesis.cancel(); speechSynthesis.speak(u);
+}
+
+async function send(text) {
+  add(esc(text), 'me', text);
+  history.push({ role: 'user', content: text });
+  const bubble = add('<span class="dots"><span>●</span><span>●</span><span>●</span></span>');
+  $('send').disabled = true;
+  try {
+    const r = await fetch('/api/chat', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ messages: history, lang, role: role || null }) });
+    const data = await r.json();
+    if (!r.ok) throw new Error(data.error || UI[lang].err);
+    history.push({ role: 'assistant', content: data.reply });
+    const used = [...new Set((data.tools_used || []).map(t => `${t.name}(${t.input.place || ''})`))];
+    bubble.firstChild.innerHTML = md(data.reply) + (used.length ? `<div class="tools">🔧 ${esc(used.join(' · '))}</div>` : '');
+    attachCopy(bubble, data.reply);
+    persist();
+    speak(data.reply);
+  } catch (e) {
+    history.pop();
+    bubble.firstChild.textContent = e.message || UI[lang].err;
+  } finally { $('send').disabled = false; chat.scrollTop = chat.scrollHeight; }
+}
+
+/* ---------- chat history (saved in this browser only) ---------- */
+const KEY = 'wg_chats', CUR = 'wg_cur';
+let chats = [], curId = null;
+const store = { get(k) { try { return localStorage.getItem(k); } catch (e) { return null; } }, set(k, v) { try { localStorage.setItem(k, v); } catch (e) {} } };
+const newId = () => 'c' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+function loadChats() { try { chats = JSON.parse(store.get(KEY) || '[]'); if (!Array.isArray(chats)) chats = []; } catch (e) { chats = []; } }
+function saveChats() { store.set(KEY, JSON.stringify(chats.slice(0, 50))); }
+function persist() {
+  if (!history.length) return;
+  let c = chats.find(x => x.id === curId);
+  if (!c) { c = { id: curId }; chats.unshift(c); }
+  c.title = (history.find(m => m.role === 'user')?.content || 'Chat').slice(0, 60);
+  c.ts = Date.now(); c.history = history.slice(-40);
+  chats.sort((a, b) => b.ts - a.ts); saveChats(); store.set(CUR, curId); renderDrawer();
+}
+function newChat() { history = []; curId = newId(); store.set(CUR, curId); renderStatic(true); renderDrawer(); closeDrawer(); }
+function openChat(id) {
+  const c = chats.find(x => x.id === id); if (!c) return;
+  curId = id; history = c.history.slice(); store.set(CUR, id);
+  renderStatic(false); chat.innerHTML = '';
+  history.forEach(m => m.role === 'user' ? add(esc(m.content), 'me', m.content) : add(md(m.content), 'bot', m.content));
+  chat.scrollTop = chat.scrollHeight; renderDrawer(); closeDrawer();
+}
+function renderDrawer() {
+  const box = $('dlist'); box.innerHTML = '';
+  if (!chats.length) { box.innerHTML = '<div class="dempty">No saved chats yet. Ask something and it will appear here.</div>'; return; }
+  chats.forEach(c => {
+    const d = document.createElement('div'); d.className = 'ditem' + (c.id === curId ? ' on' : '');
+    const when = new Date(c.ts).toLocaleString([], { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
+    d.innerHTML = `<span>${esc(c.title)}<small>${esc(when)}</small></span><button type="button" title="Delete">🗑</button>`;
+    d.onclick = () => openChat(c.id);
+    d.querySelector('button').onclick = ev => { ev.stopPropagation(); chats = chats.filter(x => x.id !== c.id); saveChats(); c.id === curId ? newChat() : renderDrawer(); };
+    box.appendChild(d);
+  });
+}
+function openDrawer() { renderDrawer(); $('drawer').hidden = false; $('scrim').hidden = false; }
+function closeDrawer() { $('drawer').hidden = true; $('scrim').hidden = true; }
+function init() {
+  loadChats();
+  const id = store.get(CUR);
+  if (id && chats.some(c => c.id === id)) openChat(id); else { curId = newId(); renderStatic(true); }
+  renderDrawer();
+}
+
+function renderStatic(greet) {
+  document.documentElement.lang = lang;
+  $('lang').value = lang; $('tag').textContent = UI[lang].tag; $('q').placeholder = UI[lang].ph;
+  $('chips').innerHTML = '';
+  UI[lang].chips.forEach(s => { const b = document.createElement('button'); b.textContent = s; b.onclick = () => send(s); $('chips').appendChild(b); });
+  if (greet) { chat.innerHTML = ''; add(UI[lang].hi); }
+}
+$('form').addEventListener('submit', e => { e.preventDefault(); const v = $('q').value.trim(); if (v) { $('q').value = ''; send(v); } });
+$('role').value = role;
+$('role').addEventListener('change', e => { role = e.target.value; store.set('wg_role', role); });
+$('lang').addEventListener('change', e => { lang = e.target.value; store.set('wg_lang', lang); newChat(); });
+$('clear').addEventListener('click', newChat);
+$('hist').addEventListener('click', openDrawer);
+$('dclose').addEventListener('click', closeDrawer);
+$('scrim').addEventListener('click', closeDrawer);
+$('dnew').addEventListener('click', newChat);
+$('dclear').addEventListener('click', () => { if (confirm('Delete all saved chats from this browser?')) { chats = []; saveChats(); newChat(); } });
+$('speak').addEventListener('click', () => { speakOn = !speakOn; $('speak').classList.toggle('off', !speakOn); if (!speakOn) speechSynthesis.cancel(); });
+$('mic').addEventListener('click', () => {
+  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if (!SR) return alert('Voice input is not supported in this browser (try Chrome).');
+  const r = new SR(); r.lang = LANG_CODE[lang]; r.onresult = ev => send(ev.results[0][0].transcript); r.start();
+});
+init();
+fetch('/api/health').then(r => r.json()).then(d => { if (d.telegram_url) { const a = $('tglink'); a.href = d.telegram_url; a.style.display = 'inline'; } }).catch(() => {});
+
+/* ---------- PWA: install button + service worker + iPhone hint ---------- */
+let deferredInstall = null;
+window.addEventListener('beforeinstallprompt', e => { e.preventDefault(); deferredInstall = e; $('install').hidden = false; });
+$('install').addEventListener('click', async () => {
+  if (!deferredInstall) return;
+  deferredInstall.prompt();
+  await deferredInstall.userChoice.catch(() => {});
+  deferredInstall = null; $('install').hidden = true;
+});
+window.addEventListener('appinstalled', () => { $('install').hidden = true; });
+const isIOS = /iphone|ipad|ipod/i.test(navigator.userAgent) && !window.navigator.standalone;
+if (isIOS && !localStorage.getItem('wg_ios_hint')) {
+  add('📱 To install on iPhone: tap the Share button, then “Add to Home Screen”.');
+  try { localStorage.setItem('wg_ios_hint', '1'); } catch (e) {}
+}
+if ('serviceWorker' in navigator) window.addEventListener('load', () => navigator.serviceWorker.register('/sw.js').catch(() => {}));
+window.addEventListener('offline', () => add('You are offline. Weather needs internet, so I will answer again when you are back online.'));
+</script>
+</body>
+</html>
